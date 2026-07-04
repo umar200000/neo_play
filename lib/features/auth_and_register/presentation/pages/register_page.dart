@@ -3,6 +3,9 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:gap/gap.dart';
 import 'package:neo_play/config/theme/colors/all_colors.dart';
 import 'package:neo_play/core/router/routes_name.dart';
+import 'package:neo_play/core/service/auth_service.dart';
+import 'package:neo_play/core/service/api/auth_api.dart';
+import 'package:neo_play/core/service/api/api_service.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -14,6 +17,56 @@ class RegisterPage extends StatefulWidget {
 class _RegisterPageState extends State<RegisterPage> {
   final TextEditingController _firstNameController = TextEditingController();
   final TextEditingController _lastNameController = TextEditingController();
+  bool _loading = false;
+
+  Future<void> _onRegister() async {
+    final firstName = _firstNameController.text.trim();
+    if (firstName.isEmpty) {
+      _showError("Ismingizni kiriting");
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      final data = await AuthApi.register(
+        firstName,
+        _lastNameController.text.trim(),
+      );
+      final user = data['user'] as Map<String, dynamic>;
+
+      // Mavjud tokenni olib, user ma'lumotlarini yangilaymiz
+      final token = await ApiService.getToken() ?? '';
+      await AuthService.saveSession(token: token, user: user);
+
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        RoutesName.homePage,
+        (route) => false,
+      );
+    } catch (_) {
+      // Backend ishlamasa ham home ga o'tish
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        RoutesName.homePage,
+        (route) => false,
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: AllColors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -41,7 +94,6 @@ class _RegisterPageState extends State<RegisterPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Gap(20.h),
-              // Sarlavha qismi
               Text(
                 "Ro'yxatdan o'tish",
                 style: TextStyle(
@@ -57,7 +109,6 @@ class _RegisterPageState extends State<RegisterPage> {
               ),
               Gap(40.h),
 
-              // Ism inputi
               _buildInputLabel("Ism"),
               Gap(12.h),
               _buildTextField(
@@ -68,7 +119,6 @@ class _RegisterPageState extends State<RegisterPage> {
 
               Gap(24.h),
 
-              // Familiya inputi
               _buildInputLabel("Familiya"),
               Gap(12.h),
               _buildTextField(
@@ -79,18 +129,10 @@ class _RegisterPageState extends State<RegisterPage> {
 
               Gap(48.h),
 
-              // Ro'yxatdan o'tish tugmasi
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
-                    // Home sahifasiga o'tish (Hamma route-larni tozalab)
-                    Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      RoutesName.homePage,
-                      (route) => false,
-                    );
-                  },
+                  onPressed: _loading ? null : _onRegister,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AllColors.primaryColor,
                     foregroundColor: Colors.white,
@@ -101,18 +143,26 @@ class _RegisterPageState extends State<RegisterPage> {
                       borderRadius: BorderRadius.circular(16.r),
                     ),
                   ),
-                  child: Text(
-                    "Ro'yxatdan o'tish",
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: _loading
+                      ? SizedBox(
+                          height: 20.h,
+                          width: 20.h,
+                          child: const CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Text(
+                          "Ro'yxatdan o'tish",
+                          style: TextStyle(
+                            fontSize: 16.sp,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
               Gap(24.h),
 
-              // Shartlar va qoidalar
               Center(
                 child: Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20.w),

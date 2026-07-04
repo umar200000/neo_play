@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:neo_play/config/theme/colors/all_colors.dart';
+import 'package:neo_play/core/service/auth_service.dart';
 
 import '../../../../core/router/routes_name.dart';
 
@@ -17,21 +18,28 @@ class _SplashPageState extends State<SplashPage> {
   @override
   void initState() {
     super.initState();
-    Timer(const Duration(seconds: 3), () {
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, RoutesName.authPage);
-      }
-    });
+    _checkAuth();
+  }
+
+  Future<void> _checkAuth() async {
+    await Future.delayed(const Duration(seconds: 3));
+    if (!mounted) return;
+
+    final loggedIn = await AuthService.isLoggedIn();
+    if (!mounted) return;
+
+    Navigator.pushReplacementNamed(
+      context,
+      loggedIn ? RoutesName.homePage : RoutesName.authPage,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AllColors.background,
-
       body: Stack(
         children: [
-          // Markaziy logo
           Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -58,7 +66,6 @@ class _SplashPageState extends State<SplashPage> {
               ],
             ),
           ),
-          // Pastki qismdagi chiziqli yuklanish indikatori
           Positioned(
             bottom: 70.h,
             left: 60.w,

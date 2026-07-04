@@ -5,11 +5,47 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:gap/gap.dart';
 import 'package:neo_play/config/theme/colors/all_colors.dart';
 import 'package:neo_play/core/router/routes_name.dart';
+import 'package:neo_play/core/service/api/movie_api.dart';
 import 'package:shimmer/shimmer.dart';
 
-class MovieList extends StatelessWidget {
+class MovieList extends StatefulWidget {
   const MovieList({super.key, required this.movieListName});
   final String movieListName;
+
+  @override
+  State<MovieList> createState() => _MovieListState();
+}
+
+class _MovieListState extends State<MovieList> {
+  bool _loading = true;
+  List<Map<String, dynamic>> _movies = [];
+
+  static const _titleToSlug = {
+    'Tarjima kinolar': 'movies',
+    'Seriallar': 'series',
+    'Multfilmlar': 'cartoons',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMovies();
+  }
+
+  Future<void> _loadMovies() async {
+    setState(() => _loading = true);
+    try {
+      final slug = _titleToSlug[widget.movieListName];
+      final data = await MovieApi.getMoviesByCategory(slug);
+      if (!mounted) return;
+      setState(() {
+        _movies = (data['movies'] as List? ?? []).cast<Map<String, dynamic>>();
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -17,17 +53,26 @@ class MovieList extends StatelessWidget {
       backgroundColor: AllColors.background,
       body: Stack(
         children: [
-          // Movie Grid
-          SingleChildScrollView(
-            child: Column(
-              children: [
-                Gap(120.h), // Space for floating header
-                _buildMovieGrid(context),
-                Gap(30.h),
-              ],
+          RefreshIndicator(
+            color: AllColors.primaryColor,
+            backgroundColor: AllColors.cardColor,
+            onRefresh: _loadMovies,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: Column(
+                children: [
+                  Gap(120.h),
+                  if (_loading)
+                    _buildLoadingGrid()
+                  else if (_movies.isEmpty)
+                    _buildEmpty()
+                  else
+                    _buildGrid(),
+                  Gap(30.h),
+                ],
+              ),
             ),
           ),
-          // Floating Header
           Positioned(top: 0, left: 0, right: 0, child: _buildHeader(context)),
         ],
       ),
@@ -69,7 +114,7 @@ class MovieList extends StatelessWidget {
               Gap(16.w),
               Expanded(
                 child: Text(
-                  movieListName,
+                  widget.movieListName,
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20.sp,
@@ -86,7 +131,7 @@ class MovieList extends StatelessWidget {
     );
   }
 
-  Widget _buildMovieGrid(BuildContext context) {
+  Widget _buildGrid() {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 16.w),
       child: AlignedGridView.count(
@@ -95,18 +140,23 @@ class MovieList extends StatelessWidget {
         crossAxisCount: 3,
         mainAxisSpacing: 20.h,
         crossAxisSpacing: 12.w,
-        itemCount: 18, // Mock count
-        itemBuilder: (context, index) {
-          return _buildGridItem(context, index);
-        },
+        itemCount: _movies.length,
+        itemBuilder: (ctx, i) => _buildGridItem(ctx, _movies[i]),
       ),
     );
   }
 
-  Widget _buildGridItem(BuildContext context, int index) {
+  Widget _buildGridItem(BuildContext context, Map<String, dynamic> movie) {
+    final imageUrl = MovieApi.fullImageUrl(movie['poster_url'] as String?);
+    final title    = movie['title_uz'] as String? ?? '';
+    final rating   = (movie['neoplay_rating'] ?? movie['imdb_rating'] ?? 0.0) as num;
+    final movieId  = movie['id'] as int?;
+
     return GestureDetector(
       onTap: () {
-        Navigator.pushNamed(context, RoutesName.movieDetails);
+        if (movieId != null) {
+          Navigator.pushNamed(context, RoutesName.movieDetails, arguments: movieId);
+        }
       },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -116,11 +166,15 @@ class MovieList extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(12.r),
                 child: CachedNetworkImage(
-                  imageUrl: "https://picsum.photos/seed/${index + 300}/400/600",
+                  imageUrl: imageUrl,
                   height: 150.h,
                   fit: BoxFit.cover,
-                  placeholder: (context, url) =>
-                      _buildShimmer(150.h, double.infinity),
+                  placeholder: (ctx, url) => _buildShimmer(150.h, double.infinity),
+                  errorWidget: (ctx, url, err) => Container(
+                    height: 150.h,
+                    color: Colors.grey[900],
+                    child: const Icon(Icons.movie_outlined, color: Colors.white30),
+                  ),
                 ),
               ),
               Positioned(
@@ -134,14 +188,10 @@ class MovieList extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      Icon(
-                        Icons.star_rounded,
-                        color: Colors.amber,
-                        size: 10.sp,
-                      ),
+                      Icon(Icons.star_rounded, color: Colors.amber, size: 10.sp),
                       Gap(2.w),
                       Text(
-                        "4.6",
+                        rating > 0 ? rating.toStringAsFixed(1) : '—',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 9.sp,
@@ -156,10 +206,41 @@ class MovieList extends StatelessWidget {
           ),
           Gap(8.h),
           Text(
-            index % 2 == 0 ? "Qashqirlar makoni" : "38-parallel",
+            title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: Colors.white, fontSize: 12.sp),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingGrid() {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16.w),
+      child: AlignedGridView.count(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisCount: 3,
+        mainAxisSpacing: 20.h,
+        crossAxisSpacing: 12.w,
+        itemCount: 12,
+        itemBuilder: (_, __) => _buildShimmer(150.h, double.infinity),
+      ),
+    );
+  }
+
+  Widget _buildEmpty() {
+    return Padding(
+      padding: EdgeInsets.all(40.r),
+      child: Column(
+        children: [
+          Icon(Icons.movie_outlined, color: Colors.grey.withOpacity(0.3), size: 80.sp),
+          Gap(16.h),
+          Text(
+            "Hozircha kino yo'q",
+            style: TextStyle(color: Colors.white, fontSize: 18.sp, fontWeight: FontWeight.bold),
           ),
         ],
       ),

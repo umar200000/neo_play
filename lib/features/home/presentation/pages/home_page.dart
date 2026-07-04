@@ -8,25 +8,31 @@ import 'package:neo_play/features/search/presentation/pages/search_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
-
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
   int pageIndex = 0;
-  final GlobalKey<SearchPageState> _searchPageKey =
-      GlobalKey<SearchPageState>();
+  final GlobalKey<SearchPageState>   _searchPageKey   = GlobalKey<SearchPageState>();
+  final GlobalKey<FavoritePageState> _favoritePageKey = GlobalKey<FavoritePageState>();
+
+  static const _navItems = [
+    _NavItem(icon: Icons.home_rounded,          outlineIcon: Icons.home_outlined,           label: 'Asosiy'),
+    _NavItem(icon: Icons.search_rounded,        outlineIcon: Icons.search_outlined,         label: 'Qidiruv'),
+    _NavItem(icon: Icons.bookmark_rounded,      outlineIcon: Icons.bookmark_outline_rounded, label: 'Saqlangan'),
+    _NavItem(icon: Icons.person_rounded,        outlineIcon: Icons.person_outline_rounded,  label: 'Profil'),
+  ];
 
   void changePage(int index, {bool focusSearch = false}) {
     if (pageIndex != index) {
-      setState(() {
-        pageIndex = index;
-      });
+      setState(() => pageIndex = index);
+      if (index == 2) {
+        Future.microtask(() => _favoritePageKey.currentState?.reload());
+      }
     }
     if (index == 1 && focusSearch) {
-      // Key ochilishidan oldin biroz kutish kerak bo'lishi mumkin
-      Future.delayed(const Duration(milliseconds: 100), () {
+      Future.delayed(const Duration(milliseconds: 120), () {
         _searchPageKey.currentState?.focusSearchField();
       });
     }
@@ -39,78 +45,59 @@ class _HomePageState extends State<HomePage> {
       resizeToAvoidBottomInset: false,
       body: SafeArea(
         top: false,
-        child: SizedBox(
-          height: double.infinity,
-          width: double.infinity,
-          child: Stack(
-            children: [
-              IndexedStack(
-                index: pageIndex,
-                children: [
-                  MainPage(onSearchTap: () => changePage(1, focusSearch: true)),
-                  SearchPage(key: _searchPageKey, onBack: () => changePage(0)),
-                  FavoritePage(onBack: () => changePage(0)),
-                  ProfilePage(onBack: () => changePage(0)),
-                ],
-              ),
-              Positioned(
-                bottom: -1,
-                left: -1,
-                right: -1,
-                child: Container(
-                  height: 70.h,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(16.r),
-                    ),
-                    color: AllColors.bottomNavigatorBackgroundColor,
-                    border: Border.all(color: const Color(0xff3C3E42)),
-                  ),
-                  child: Row(
-                    children: [
-                      _buildNavItem(
-                        index: 0,
-                        icon: Icons.home_outlined,
-                        activeIcon: Icons.home_outlined,
-                        label: "Asosiy",
-                      ),
-                      _buildNavItem(
-                        index: 1,
-                        icon: Icons.search,
-                        activeIcon: Icons.search,
-                        label: "Qidiruv",
-                      ),
-                      _buildNavItem(
-                        index: 2,
-                        icon: Icons.bookmark_border,
-                        activeIcon: Icons.bookmark_border,
-                        label: "Saqlangan",
-                      ),
-                      _buildNavItem(
-                        index: 3,
-                        icon: Icons.person_outline,
-                        activeIcon: Icons.person_outline,
-                        label: "Profil",
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+        child: Stack(
+          children: [
+            IndexedStack(
+              index: pageIndex,
+              children: [
+                MainPage(onSearchTap: () => changePage(1, focusSearch: true)),
+                SearchPage(key: _searchPageKey,   onBack: () => changePage(0)),
+                FavoritePage(key: _favoritePageKey, onBack: () => changePage(0)),
+                ProfilePage(onBack: () => changePage(0)),
+              ],
+            ),
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: _buildNavBar(),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildNavItem({
-    required int index,
-    required IconData icon,
-    required IconData activeIcon,
-    required String label,
-  }) {
-    bool isActive = pageIndex == index;
+  Widget _buildNavBar() {
+    return Container(
+      height: 76.h,
+      decoration: BoxDecoration(
+        color: AllColors.navBackground,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
+        border: Border(
+          top: BorderSide(color: Colors.white.withOpacity(0.07), width: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.6),
+            blurRadius: 24,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: List.generate(
+          _navItems.length,
+          (i) => _buildNavItem(i),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem(int index) {
+    final item     = _navItems[index];
+    final isActive = pageIndex == index;
+
     return Expanded(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -118,18 +105,43 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              isActive ? activeIcon : icon,
-              color: isActive ? AllColors.white : AllColors.greyText,
-              size: 24.sp,
+            // Active indicator dot at top
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
+              width: isActive ? 20.w : 0,
+              height: isActive ? 3.h : 0,
+              margin: EdgeInsets.only(bottom: isActive ? 6.h : 0),
+              decoration: BoxDecoration(
+                color: AllColors.primaryColor,
+                borderRadius: BorderRadius.circular(2.r),
+                boxShadow: isActive
+                    ? [BoxShadow(color: AllColors.primaryColor.withOpacity(0.6), blurRadius: 8)]
+                    : null,
+              ),
+            ),
+            // Icon with glow container
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: EdgeInsets.all(isActive ? 8.r : 0),
+              decoration: BoxDecoration(
+                color: isActive ? AllColors.primaryColor.withOpacity(0.12) : Colors.transparent,
+                borderRadius: BorderRadius.circular(12.r),
+              ),
+              child: Icon(
+                isActive ? item.icon : item.outlineIcon,
+                size: 22.sp,
+                color: isActive ? AllColors.primaryColor : AllColors.greyText,
+              ),
             ),
             SizedBox(height: 4.h),
             Text(
-              label,
+              item.label,
               style: TextStyle(
                 color: isActive ? AllColors.white : AllColors.greyText,
-                fontSize: 12.sp,
-                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                fontSize: 10.sp,
+                fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                letterSpacing: 0.2,
               ),
             ),
           ],
@@ -137,4 +149,11 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+}
+
+class _NavItem {
+  final IconData icon;
+  final IconData outlineIcon;
+  final String label;
+  const _NavItem({required this.icon, required this.outlineIcon, required this.label});
 }

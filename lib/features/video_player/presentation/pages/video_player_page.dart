@@ -5,23 +5,34 @@ import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:gap/gap.dart';
 import 'package:neo_play/config/theme/colors/all_colors.dart';
+import 'package:neo_play/core/service/api/movie_api.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 class VideoPlayerPage extends StatefulWidget {
-  const VideoPlayerPage({super.key});
+  const VideoPlayerPage({
+    super.key,
+    required this.videoUrl,
+    required this.videoTitle,
+    this.movieId,
+  });
+  final String videoUrl;
+  final String videoTitle;
+  final int? movieId;
 
   @override
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
 }
 
 class _VideoPlayerPageState extends State<VideoPlayerPage> {
-  late VideoPlayerController _controller;
+  VideoPlayerController? _controller;
   bool _showControls = true;
   bool _isFullScreen = false;
   bool _isMuted = false;
   bool _isLocked = false;
+  bool _hasError = false;
   Timer? _hideTimer;
+  Timer? _progressTimer;
 
   double _playbackSpeed = 1.0;
   String _currentQuality = "720p";
@@ -32,9 +43,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   @override
   void initState() {
     super.initState();
-    WakelockPlus.enable(); // Screen always on
+    WakelockPlus.enable();
     _initializePlayer();
     _startHideTimer();
+    _startProgressTimer();
+  }
+
+  void _startProgressTimer() {
+    if (widget.movieId == null) return;
+    _progressTimer = Timer.periodic(const Duration(seconds: 15), (_) => _saveProgress());
+  }
+
+  Future<void> _saveProgress() async {
+    final id = widget.movieId;
+    final ctrl = _controller;
+    if (id == null || ctrl == null || !ctrl.value.isInitialized) return;
+    final pos = ctrl.value.position.inSeconds;
+    final total = ctrl.value.duration.inSeconds;
+    if (total > 0) await MovieApi.saveProgress(id, pos, total);
   }
 
   void _startHideTimer() {
@@ -49,73 +75,77 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   }
 
   Future<void> _initializePlayer() async {
-    _controller = VideoPlayerController.networkUrl(
-      Uri.parse(
-        'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-      ),
-    );
+    final url = widget.videoUrl.isNotEmpty
+        ? widget.videoUrl
+        : 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+
+    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
 
     try {
-      await _controller.initialize();
-      await _controller.setPlaybackSpeed(_playbackSpeed);
-
-      _controller.addListener(_videoListener);
+      await controller.initialize();
+      await controller.setPlaybackSpeed(_playbackSpeed);
+      controller.addListener(_videoListener);
 
       if (mounted) {
-        setState(() {});
-        _controller.play();
+        setState(() {
+          _controller = controller;
+          _hasError = false;
+        });
+        controller.play();
       }
     } catch (e) {
       debugPrint("Video Player Error: $e");
+      await controller.dispose();
+      if (mounted) setState(() => _hasError = true);
     }
   }
 
   void _videoListener() {
-    if (mounted) {
-      setState(() {});
-    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _changeQuality(String quality) async {
-    if (_currentQuality == quality) return;
+    if (_currentQuality == quality || _controller == null) return;
 
-    final Duration currentPosition = _controller.value.position;
-    final bool wasPlaying = _controller.value.isPlaying;
+    final Duration currentPosition = _controller!.value.position;
+    final bool wasPlaying = _controller!.value.isPlaying;
 
-    _controller.removeListener(_videoListener);
-    await _controller.dispose();
+    _controller!.removeListener(_videoListener);
+    await _controller!.dispose();
 
     setState(() {
       _currentQuality = quality;
-      _controller = VideoPlayerController.networkUrl(
-        Uri.parse(
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-        ),
-      );
+      _controller = null;
     });
 
+    final url = widget.videoUrl.isNotEmpty
+        ? widget.videoUrl
+        : 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+
+    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
     try {
-      await _controller.initialize();
-      await _controller.seekTo(currentPosition);
-      await _controller.setPlaybackSpeed(_playbackSpeed);
-
-      _controller.addListener(_videoListener);
-
-      if (wasPlaying) {
-        _controller.play();
+      await controller.initialize();
+      await controller.seekTo(currentPosition);
+      await controller.setPlaybackSpeed(_playbackSpeed);
+      controller.addListener(_videoListener);
+      if (mounted) {
+        setState(() => _controller = controller);
+        if (wasPlaying) controller.play();
       }
-      setState(() {});
     } catch (e) {
       debugPrint("Quality Change Error: $e");
+      await controller.dispose();
     }
   }
 
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _progressTimer?.cancel();
+    _saveProgress();
     WakelockPlus.disable();
-    _controller.removeListener(_videoListener);
-    _controller.dispose();
+    _controller?.removeListener(_videoListener);
+    _controller?.dispose();
     _resetOrientation();
     super.dispose();
   }
@@ -205,11 +235,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           children: [
             Text(
               "Video tezligini tanlang",
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
             ),
             Gap(16.h),
             Flexible(
@@ -219,17 +245,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                 itemBuilder: (context, index) {
                   final speed = _speeds[index];
                   return ListTile(
-                    title: Text(
-                      "${speed}x",
-                      style: const TextStyle(color: Colors.white),
-                    ),
+                    title: Text("${speed}x", style: const TextStyle(color: Colors.white)),
                     trailing: _playbackSpeed == speed
                         ? const Icon(Icons.check, color: AllColors.primaryColor)
                         : null,
                     onTap: () {
                       setState(() {
                         _playbackSpeed = speed;
-                        _controller.setPlaybackSpeed(speed);
+                        _controller?.setPlaybackSpeed(speed);
                       });
                       Navigator.pop(context);
                     },
@@ -259,11 +282,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           children: [
             Text(
               "Video sifatini tanlang",
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
             ),
             Gap(16.h),
             Flexible(
@@ -273,10 +292,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                 itemBuilder: (context, index) {
                   final quality = _qualities[index];
                   return ListTile(
-                    title: Text(
-                      quality,
-                      style: const TextStyle(color: Colors.white),
-                    ),
+                    title: Text(quality, style: const TextStyle(color: Colors.white)),
                     trailing: _currentQuality == quality
                         ? const Icon(Icons.check, color: AllColors.primaryColor)
                         : null,
@@ -316,6 +332,45 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Error state
+    if (_hasError) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, color: Colors.white54, size: 64.sp),
+              Gap(16.h),
+              Text('Video yuklanmadi',
+                  style: TextStyle(color: Colors.white, fontSize: 18.sp, fontWeight: FontWeight.bold)),
+              Gap(8.h),
+              Text("Internet aloqasini tekshiring",
+                  style: TextStyle(color: Colors.grey, fontSize: 14.sp)),
+              Gap(24.h),
+              ElevatedButton.icon(
+                onPressed: () {
+                  setState(() => _hasError = false);
+                  _initializePlayer();
+                },
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Qayta urinish'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AllColors.primaryColor,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+              Gap(12.h),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Orqaga', style: TextStyle(color: Colors.grey)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return OrientationBuilder(
       builder: (context, orientation) {
         final bool isLandscape = orientation == Orientation.landscape;
@@ -323,16 +378,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         return Scaffold(
           backgroundColor: Colors.black,
           body: WillPopScope(
-            onWillPop: () async {
-              // Har doim orqaga qaytish (sahifadan chiqish)
-              return true;
-            },
+            onWillPop: () async => true,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () {
-                setState(() {
-                  _showControls = !_showControls;
-                });
+                setState(() => _showControls = !_showControls);
                 if (_showControls) {
                   _startHideTimer();
                 } else {
@@ -341,26 +391,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               },
               child: Stack(
                 children: [
+                  // Video / loading
                   Positioned.fill(
                     child: Center(
-                      child: _controller.value.isInitialized
+                      child: (_controller?.value.isInitialized == true)
                           ? AspectRatio(
-                              aspectRatio: _controller.value.aspectRatio,
-                              child: VideoPlayer(_controller),
+                              aspectRatio: _controller!.value.aspectRatio,
+                              child: VideoPlayer(_controller!),
                             )
-                          : const CircularProgressIndicator(
-                              color: AllColors.primaryColor,
-                            ),
+                          : const CircularProgressIndicator(color: AllColors.primaryColor),
                     ),
                   ),
-                  if (_controller.value.isInitialized &&
-                      (_controller.value.isBuffering ||
-                          !_controller.value.isInitialized))
+                  // Buffering spinner
+                  if (_controller?.value.isInitialized == true &&
+                      _controller!.value.isBuffering)
                     const Center(
-                      child: CircularProgressIndicator(
-                        color: AllColors.primaryColor,
-                      ),
+                      child: CircularProgressIndicator(color: AllColors.primaryColor),
                     ),
+                  // Controls overlay
                   Positioned.fill(
                     child: AnimatedOpacity(
                       opacity: _showControls ? 1.0 : 0.0,
@@ -370,7 +418,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                         child: Stack(
                           children: [
                             _buildTopBar(isLandscape),
-                            if (!_isLocked) ...[
+                            if (!_isLocked && _controller?.value.isInitialized == true) ...[
                               _buildCenterControls(isLandscape),
                               _buildBottomBar(isLandscape),
                             ],
@@ -394,12 +442,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       left: 0,
       right: 0,
       child: Container(
-        padding: EdgeInsets.fromLTRB(
-          16.w,
-          isLandscape ? 10.h : 40.h,
-          16.w,
-          10.h,
-        ),
+        padding: EdgeInsets.fromLTRB(16.w, isLandscape ? 10.h : 40.h, 16.w, 10.h),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -412,20 +455,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           children: [
             if (!_isLocked)
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      "Koperatsiya: Maxfiy hamkorlik",
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: isLandscape ? 12.sp : 18.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  widget.videoTitle,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: isLandscape ? 12.sp : 18.sp,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               )
             else
@@ -435,9 +472,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               children: [
                 GestureDetector(
                   onTap: () {
-                    setState(() {
-                      _isLocked = !_isLocked;
-                    });
+                    setState(() => _isLocked = !_isLocked);
                     if (!_isLocked) {
                       _showControls = true;
                       _startHideTimer();
@@ -461,14 +496,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                   IconButton(
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
-                    icon: Icon(
-                      Icons.close,
-                      color: Colors.white,
-                      size: isLandscape ? 12.sp : 28.sp,
-                    ),
-                    onPressed: () {
-                      Navigator.pop(context);
-                    },
+                    icon: Icon(Icons.close, color: Colors.white, size: isLandscape ? 12.sp : 28.sp),
+                    onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ],
@@ -480,22 +509,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   }
 
   Widget _buildCenterControls(bool isLandscape) {
-    final bool isBuffering = _controller.value.isBuffering;
+    final bool isBuffering = _controller?.value.isBuffering ?? false;
 
     return Center(
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(
-            icon: Icon(
-              Icons.replay_10_rounded,
-              color: Colors.white,
-              size: isLandscape ? 24.sp : 40.sp,
-            ),
+            icon: Icon(Icons.replay_10_rounded, color: Colors.white,
+                size: isLandscape ? 24.sp : 40.sp),
             onPressed: () {
-              _controller.seekTo(
-                _controller.value.position - const Duration(seconds: 10),
-              );
+              _controller?.seekTo((_controller!.value.position) - const Duration(seconds: 10));
               _startHideTimer();
             },
           ),
@@ -504,16 +528,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               ? SizedBox(
                   width: isLandscape ? 40.r : 72.r,
                   height: isLandscape ? 40.r : 72.r,
-                  child: const CircularProgressIndicator(
-                    color: AllColors.primaryColor,
-                  ),
+                  child: const CircularProgressIndicator(color: AllColors.primaryColor),
                 )
               : GestureDetector(
                   onTap: () {
                     setState(() {
-                      _controller.value.isPlaying
-                          ? _controller.pause()
-                          : _controller.play();
+                      _controller?.value.isPlaying == true
+                          ? _controller!.pause()
+                          : _controller!.play();
                     });
                     _startHideTimer();
                   },
@@ -524,7 +546,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      _controller.value.isPlaying
+                      _controller?.value.isPlaying == true
                           ? Icons.pause_rounded
                           : Icons.play_arrow_rounded,
                       color: Colors.white,
@@ -534,15 +556,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                 ),
           Gap(isLandscape ? 24.w : 40.w),
           IconButton(
-            icon: Icon(
-              Icons.forward_10_rounded,
-              color: Colors.white,
-              size: isLandscape ? 24.sp : 40.sp,
-            ),
+            icon: Icon(Icons.forward_10_rounded, color: Colors.white,
+                size: isLandscape ? 24.sp : 40.sp),
             onPressed: () {
-              _controller.seekTo(
-                _controller.value.position + const Duration(seconds: 10),
-              );
+              _controller?.seekTo((_controller!.value.position) + const Duration(seconds: 10));
               _startHideTimer();
             },
           ),
@@ -552,17 +569,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   }
 
   Widget _buildBottomBar(bool isLandscape) {
+    final position = _controller?.value.position ?? Duration.zero;
+    final duration = _controller?.value.duration ?? Duration.zero;
+
     return Positioned(
       bottom: 0,
       left: 0,
       right: 0,
       child: Container(
-        padding: EdgeInsets.fromLTRB(
-          16.w,
-          10.h,
-          16.w,
-          isLandscape ? 10.h : 40.h,
-        ),
+        padding: EdgeInsets.fromLTRB(16.w, 10.h, 16.w, isLandscape ? 10.h : 40.h),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
@@ -577,74 +592,60 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  "${_formatDuration(_controller.value.position)} / ${_formatDuration(_controller.value.duration)}",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: isLandscape ? 9.sp : 12.sp,
-                  ),
+                  "${_formatDuration(position)} / ${_formatDuration(duration)}",
+                  style: TextStyle(color: Colors.white, fontSize: isLandscape ? 9.sp : 12.sp),
                 ),
                 Row(
                   children: [
                     IconButton(
                       icon: Icon(
-                        _isMuted
-                            ? Icons.volume_off_rounded
-                            : Icons.volume_up_rounded,
+                        _isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
                         color: Colors.white,
                         size: isLandscape ? 14.sp : 20.sp,
                       ),
                       onPressed: () {
                         setState(() {
                           _isMuted = !_isMuted;
-                          _controller.setVolume(_isMuted ? 0.0 : 1.0);
+                          _controller?.setVolume(_isMuted ? 0.0 : 1.0);
                         });
                         _startHideTimer();
                       },
                     ),
                     IconButton(
-                      icon: Icon(
-                        Icons.settings_rounded,
-                        color: Colors.white,
-                        size: isLandscape ? 14.sp : 20.sp,
-                      ),
+                      icon: Icon(Icons.settings_rounded, color: Colors.white,
+                          size: isLandscape ? 14.sp : 20.sp),
                       onPressed: _showSettingsModal,
                     ),
                     IconButton(
-                      icon: Icon(
-                        Icons.screen_rotation_rounded,
-                        color: Colors.white,
-                        size: isLandscape ? 14.sp : 20.sp,
-                      ),
+                      icon: Icon(Icons.screen_rotation_rounded, color: Colors.white,
+                          size: isLandscape ? 14.sp : 20.sp),
                       onPressed: _toggleFullScreen,
                     ),
                   ],
                 ),
               ],
             ),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onHorizontalDragStart: (_) => _hideTimer?.cancel(),
-              onHorizontalDragEnd: (_) => _startHideTimer(),
-              onTapDown: (_) => _hideTimer?.cancel(),
-              onTapUp: (_) => _startHideTimer(),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  vertical: 12.h,
-                ), // Touch area increased
-                child: VideoProgressIndicator(
-                  _controller,
-                  allowScrubbing: true,
-                  padding: EdgeInsets.symmetric(
-                    vertical: 4.h,
-                  ), // Visual thickness
-                  colors: VideoProgressColors(
-                    playedColor: AllColors.primaryColor,
-                    bufferedColor: Colors.white.withOpacity(0.2),
-                    backgroundColor: Colors.white.withOpacity(0.1),
+            if (_controller != null)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragStart: (_) => _hideTimer?.cancel(),
+                onHorizontalDragEnd: (_) => _startHideTimer(),
+                onTapDown: (_) => _hideTimer?.cancel(),
+                onTapUp: (_) => _startHideTimer(),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12.h),
+                  child: VideoProgressIndicator(
+                    _controller!,
+                    allowScrubbing: true,
+                    padding: EdgeInsets.symmetric(vertical: 4.h),
+                    colors: VideoProgressColors(
+                      playedColor: AllColors.primaryColor,
+                      bufferedColor: Colors.white.withOpacity(0.2),
+                      backgroundColor: Colors.white.withOpacity(0.1),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),

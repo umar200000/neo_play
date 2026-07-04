@@ -46,6 +46,7 @@ Widget appRoutes(RouteSettings settings) {
       {
         return const MovieDetails();
       }
+
     case RoutesName.notification:
       {
         return const NotificationPage();
@@ -62,7 +63,11 @@ Widget appRoutes(RouteSettings settings) {
       }
     case RoutesName.videoPlayerPage:
       {
-        return VideoPlayerPage();
+        final args = settings.arguments;
+        final videoUrl   = args is Map ? (args['videoUrl'] as String? ?? '') : '';
+        final videoTitle = args is Map ? (args['title']    as String? ?? '') : '';
+        final movieId    = args is Map ? args['movieId']   as int? : null;
+        return VideoPlayerPage(videoUrl: videoUrl, videoTitle: videoTitle, movieId: movieId);
       }
 
     case RoutesName.topUpBalance:
